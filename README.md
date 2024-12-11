@@ -25,7 +25,10 @@ Run the following command:
 pip3 install -r requirements.txt
 ```
 
-#### 2.2 Make watchcore Executable
+#### 2.2 Modification of Specific Parts of the Code
+The value of WEBHOOK_URL among the global variables in Watchcore needs to be changed to your own Discord Webhook URL.
+
+#### 2.3 Make watchcore Executable
 After installing the required modules, make the `watchcore` script executable by running the following command:
 
 ```bash
