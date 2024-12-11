@@ -1,6 +1,11 @@
 # **Core Keeper Dedicated Server Monitoring Guide**
 
 ---
+**The original Korean text of this repository can be found at the link below.**
+
+*https://ssoobaakbaaa.tistory.com/6*
+
+---
 
 ## **1. System Preparation**
 
