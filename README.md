@@ -68,6 +68,7 @@ After=network.target
 Type=simple
 User=corekeeper
 WorkingDirectory=/home/corekeeper/watchcore
+ExecStartPre=/bin/sleep 5
 ExecStart=/home/corekeeper/watchcore/watchcore
 KillMode=process
 Restart=on-failure
