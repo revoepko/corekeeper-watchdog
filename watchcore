@@ -9,6 +9,8 @@ import signal
 import sys
 from datetime import datetime
 import re
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Logging configuration
 logging.basicConfig(
@@ -25,6 +27,19 @@ TARGET_STRING = "Game ID:"  # String to find the game ID in the logs
 WATCHCORE_STATUS_MESSAGE = "ID:"  # String to find in the WatchCore status message
 MESSAGE_ID = None  # Initialize the Discord message ID
 LAST_STATUS_MESSAGE = None  # Last server status message
+
+# HTTP session with retry strategy for network robustness
+RETRY_STRATEGY = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["HEAD", "GET", "POST", "PATCH"]
+)
+HTTP_ADAPTER = HTTPAdapter(max_retries=RETRY_STRATEGY)
+SESSION = requests.Session()
+SESSION.mount("http://", HTTP_ADAPTER)
+SESSION.mount("https://", HTTP_ADAPTER)
+REQUEST_TIMEOUT = 10  # seconds
 
 # Function to initialize the message ID
 def initialize_message_id():
@@ -65,22 +80,29 @@ def extract_message_id_from_log(log_line):
 
 # Function to send or update the Discord message
 def send_or_update_discord_message(content):
+    """Send a new Discord message or update the existing one.
+
+    Returns True if the operation succeeded, False otherwise.
+    """
     global MESSAGE_ID
 
     data = {"content": content}
 
     try:
         # If the existing message ID is invalid, create a new message
-        if MESSAGE_ID:
-            if not is_message_id_valid(MESSAGE_ID):
-                logging.warning("MESSAGE_ID is invalid. Creating a new message.")
-                MESSAGE_ID = None
+        if MESSAGE_ID and not is_message_id_valid(MESSAGE_ID):
+            logging.warning("MESSAGE_ID is invalid. Creating a new message.")
+            MESSAGE_ID = None
 
         # If the message already exists, update it using PATCH, otherwise create a new one
         if MESSAGE_ID:
-            response = requests.patch(f"{WEBHOOK_URL}/messages/{MESSAGE_ID}", json=data)
+            response = SESSION.patch(
+                f"{WEBHOOK_URL}/messages/{MESSAGE_ID}", json=data, timeout=REQUEST_TIMEOUT
+            )
         else:
-            response = requests.post(f"{WEBHOOK_URL}?wait=1", json=data)
+            response = SESSION.post(
+                f"{WEBHOOK_URL}?wait=1", json=data, timeout=REQUEST_TIMEOUT
+            )
 
         if response.status_code in {200, 204}:  # Handle successful responses
             if not MESSAGE_ID:
@@ -89,18 +111,27 @@ def send_or_update_discord_message(content):
                 logging.info(f"Message created successfully, ID: {MESSAGE_ID}")
             else:
                 logging.info("Message updated successfully")
+            return True
         else:
-            logging.warning(f"Message processing failed: {response.status_code}, {response.text}")
+            logging.warning(
+                f"Message processing failed: {response.status_code}, {response.text}"
+            )
+            return False
     except Exception as e:
         logging.error(f"Error occurred while processing the message: {e}", exc_info=True)
+        return False
 
 # Function to check if the message ID is valid
 def is_message_id_valid(message_id):
     try:
-        response = requests.get(f"{WEBHOOK_URL}/messages/{message_id}")
+        response = SESSION.get(
+            f"{WEBHOOK_URL}/messages/{message_id}", timeout=REQUEST_TIMEOUT
+        )
         return response.status_code == 200
     except Exception as e:
-        logging.error(f"Error occurred while checking message validity: {e}", exc_info=True)
+        logging.error(
+            f"Error occurred while checking message validity: {e}", exc_info=True
+        )
         return False
 
 # Function to check the CoreKeeper service status and update the Discord message
@@ -141,10 +172,14 @@ def check_service_status():
 **Watchcore Status**
 ```{watchcore_status}```"""
 
-        # Only update Discord if the message has changed
+        # Only update Discord if the message has changed and sending succeeds
         if new_status_message != LAST_STATUS_MESSAGE:
-            send_or_update_discord_message(new_status_message)
-            LAST_STATUS_MESSAGE = new_status_message
+            if send_or_update_discord_message(new_status_message):
+                LAST_STATUS_MESSAGE = new_status_message
+            else:
+                logging.warning(
+                    "Failed to send status message. Will retry on next check."
+                )
     except Exception as e:
         logging.error(f"Error occurred while checking server status: {e}", exc_info=True)
 
